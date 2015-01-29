@@ -1,0 +1,532 @@
+
+# coding: utf-8
+
+# 2$^{nd}$ Order Taylor Decomposition -- deconvolve annual cycle of ocean acidification variables
+# ------------------------------------
+
+### Introduction
+
+# In oceanography, key carbonate system variables such as pH are controlled by 4 other variables: $ pH = f(T, S, C_T, A_T)$. Two additional input variables can be neglected in most but not all surface waters. Here we quantify how variations in these 4 main input variables contribute to seasonal variations in acidity, namely $\mathrm{H}^{+}$ (computed as $10^{-\mathrm{pH}}$). To do that, we perform a Taylor series decomposition. This yields,
+
+# \begin{eqnarray}
+#   \Delta H^+ = 
+#                \frac{\partial H^+}{\partial C_T} \Delta C_T 
+#              + \frac{\partial H^+}{\partial A_T} \Delta A_T  
+#              + \frac{\partial H^+}{\partial T}   \Delta T
+#              + \frac{\partial H^+}{\partial S}   \Delta S 
+#              + O(2)
+# \hbox{,}
+# \end{eqnarray}
+# 
+# where the final term regroups all second-order terms. Yet second-order terms are usually neglected, because with 4 independent variables that means adding 10 additional terms. Although simplicity is elegant, the associated imprecision cannot be known in advance. So just what are those 2nd-order terms:
+# 
+# \begin{alignat}{2}
+#           O(2)  = \frac{1}{2!}\left(\frac{\partial^2 H^{+}}{\partial C_T^2} (\Delta C_T)^2 
+#                   +                   \frac{\partial^2 H^{+}}{\partial A_T^2} (\Delta A_T)^2
+#                   +                   \frac{\partial^2 H^{+}}{\partial T^2} (\Delta T)^2 
+#                   +                   \frac{\partial^2 H^{+}}{\partial S^2} (\Delta S)^2    
+#                   +                  2\frac{\partial^2 H^{+}}{\partial C_T \partial A_T} \Delta C_T \Delta A_T \\
+#                   \phantom{+                  2\frac{\partial^2 H^{+}}{\partial C_T \partial T}   \Delta C_T \Delta T}
+#                   +                  2\frac{\partial^2 H^{+}}{\partial C_T \partial T}   \Delta C_T \Delta T
+#                   +                  2\frac{\partial^2 H^{+}}{\partial C_T \partial S}   \Delta C_T \Delta S
+#                   +                  2\frac{\partial^2 H^{+}}{\partial A_T \partial T}   \Delta A_T \Delta T
+#                   +                  2\frac{\partial^2 H^{+}}{\partial A_T \partial S}   \Delta A_T \Delta S
+#                   +                  2\frac{\partial^2 H^{+}}{\partial T \partial S}   \Delta T \Delta S
+#                \right)
+# \hbox{.}
+# \end{alignat}
+# 
+# Wow, that looks messy! But take another look. It only involves $\Delta$'s, which we know ahead of time, and second derivatives, which a computer can calculate easily as you'll see shortly. In both equations, the $\Delta$ indicates the amplitude of the annual cyle (August minus February), H$^+$ is the hydrogen ion concentration, C$_T$ is the dissolved ionrganic carbon, A$_T$ is total alkalinity, T is temperature, and S is salinty. Here we assume that 3rd order terms and beyond are negligible. That could be checked later by comparing the sum of right hand terms with the model's simulated $\Delta H^+$, assuming the $\Delta$'s are not too large and the terms are independant. 
+# 
+# Particularly when only the first order equation is used, the accuracy is reduced even further when the four variables are not independant.  For instance we know that at the surface, C$_T$ is affected by $T$ while A$_T$ is correlated with $S$.  Thus it is harder still to justify neglecting the 2nd order terms, which account for covariance between variables.
+# 
+# Analogous equations can be written for the other key carbonate system variables, including the partial pressure of carbon dioxide $p$CO$_2$, saturation states for aragonite $\Omega_A$ and calcite $\Omega_C$, and the carbonate ion concentration CO$_3^{2-}$. For example,
+
+# \begin{eqnarray}
+#   \Delta CO_3^{2-} = 
+#                \frac{\partial CO_3^{2-}}{\partial C_T} \Delta C_T 
+#              + \frac{\partial CO_3^{2-}}{\partial A_T} \Delta A_T  
+#              + \frac{\partial CO_3^{2-}}{\partial T}   \Delta T
+#              + \frac{\partial CO_3^{2-}}{\partial S}   \Delta S
+#              + O(2)
+# \hbox{.}
+# \end{eqnarray}
+# On the right-hand side, the amplitude of the annual cycle $\Delta$ of each of the 4 terms is known, being computed directly from the model output of the 4 model tracers (T, S, C$_T$, and A$_T$). Conversely, the 4 partial differentials must be calculated.  The first two (for C$_T$ and A$_T$) have analytical solutions (Egleston et al., 2010), whereas the last two (for T and S) must be computed numerically. For consistency, we will compute all 4 partials numerically.  Later, numerical results for the first two partials will be checked with the analytical solutions.
+# 
+
+# So let's use `R` to specify input data, compute the derivatives and combined terms, and compare them.  Our goals are (1) to determine the dominant terms and how those change with time, and (2) to assess if the 2nd-order terms are significant.  We are aware of only 1 other ocean carbon study that considered 2nd order terms in a Taylor series deconvolution (Previdi et al., 2009). Their focus was on an interannual change of the air-sea CO$_2$ flux over the Mid-Atlantic Bight; conversely we focus on impacts of the increased CO$_2$ on the seasonal variability of 4 key ocean acidification variables. 
+# 
+# So now that we have a plan, let's tell the computer how to realize it.
+
+### Launch R & get libraries
+
+# Don't forget to change the libray path after loadng the modules and before launch the ipython notebook:
+
+# In[1]:
+
+#module load python/2.7.5
+#module load R/3.0.1
+#setenv LD_LIBRARY_PATH ${LD_LIBRARY_PATH}:/usr/local/install/R-3.0.1/lib64/R/lib
+#ipython notebook --pylab inline --no-browser --port=70XX --notebook-dir=~/IPy_Notebooks
+
+
+# So let's get going.  We'll use `R` via this `iPython Notebook` interface.  We start by loading `Rmagic`, which is part of `Rpy2` for `iPython`. Load also matplotlib and basemap to make maps.
+
+# In[1]:
+
+from mpl_toolkits.basemap import Basemap
+import numpy as np
+import matplotlib.pyplot as plt
+import netCDF4
+import os.path
+get_ipython().magic(u'reload_ext rpy2.ipython')
+get_ipython().magic(u'load_ext oct2py.ipython')
+get_ipython().magic(u"octave addpath('/home/users/blevu/Nemo_tools/')")
+
+
+# Then launch R and install the needed R libraries (packages), if they are not already installed. You may need to install the `Hmisc` library with same command in an R session on X terminal. After installing, comment out corresponding line as below.
+
+# In[2]:
+
+get_ipython().run_cell_magic(u'R', u'', u" # remove.packages('seacarb')\n  install.packages('seacarb')\n # remove.packages('Hmisc')\n  install.packages('Hmisc')\n  install.packages('abind')\n  install.packages('numDeriv')\n  library(seacarb)\n  library(numDeriv)")
+
+
+# Call libraries & define new simple functions to pass results from `seacarb`'s `carb` routine to `numDeriv`'s routines that calculate 1st and 2nd derivatives (`jacobian` and `hessian`, respectively).  
+
+### Load 2D mask and annual mean, february and august field from the model outputs (T, S, DIC, TALK, PO4, Si) and CO2SYS (H, CO3, OmegaA)
+
+# In[3]:
+
+# load the 2D mask for MED8
+f = netCDF4.Dataset('/home/biomac1/blevu/NEMO_files/mesh_mask_MED8_2.nc','r')
+field = f.variables['tmask']
+tmask = field[:]
+mask = np.squeeze(tmask[:,1])
+field = f.variables['nav_lon']
+lon = field[:]
+field = f.variables['nav_lat']
+lat = field[:]
+field = f.variables['e1t']
+e1 = field[:]
+field = f.variables['e2t']
+e2 = field[:]
+field = f.variables['e3t']
+e3 = field[:]
+ds2d = e1 * e2
+f.close()
+# load mask for med part
+f = netCDF4.Dataset('/home/biomac1/blevu/NEMO_files/mask_med8/MASK_MED.nc','r')
+field = f.variables['tmask_sb']
+mask_MED = field[:]
+ds2d_mask = ds2d * mask_MED
+S_MED = ds2d * mask_MED.sum()
+f.close()
+
+# Define parameter like which simulation and year of extraction 
+dirout = '/home/biomac1/blevu/SCRATCH/DE9_2000/'
+Param = ['votemper','vosaline','PO4','Si','DIC','Alkalini','Hcal','OmegaA','CO3cal']
+run = 'a' # a = CO2+clim / b = CO2 / 2b = Control / 2a = clim
+CO2 = '2'
+deb = 234 # year = 2084
+fin = 249 # year = 2099
+
+# Load the 2D field of the yearly mean state between deb-fin
+f = netCDF4.Dataset(dirout+'Nvotemper'+run+'_1y_1850_2099.nc', 'r')
+field = f.variables['ymean']
+feb = f.variables['yfeb']
+aug = f.variables['yaug']
+Tmean = np.mean(field[deb:fin],axis=0)
+DT = np.mean(aug[deb:fin]-feb[deb:fin],axis=0)
+f.close()
+
+f = netCDF4.Dataset(dirout+'Nvosaline'+run+'_1y_1850_2099.nc', 'r')
+field = f.variables['ymean']
+feb = f.variables['yfeb']
+aug = f.variables['yaug']
+Smean =  np.mean(field[deb:fin],axis=0)
+DS = np.mean(aug[deb:fin]-feb[deb:fin],axis=0)
+f.close()
+
+f = netCDF4.Dataset(dirout+'NPO4'+run+'_1y_1850_2099.nc', 'r')
+field = f.variables['ymean']
+feb = f.variables['yfeb']
+aug = f.variables['yaug']
+PO4mean = np.mean(field[deb:fin],axis=0) * 1e6 / 1.027
+DPO4 = np.mean(aug[deb:fin]-feb[deb:fin],axis=0) * 1e6 / 1.027
+f.close()
+
+f = netCDF4.Dataset(dirout+'NSi'+run+'_1y_1850_2099.nc', 'r')
+field = f.variables['ymean']
+feb = f.variables['yfeb']
+aug = f.variables['yaug']
+Simean = np.mean(field[deb:fin],axis=0) * 1e6 / 1.027
+DSi = np.mean(aug[deb:fin]-feb[deb:fin],axis=0) * 1e6 / 1.027
+f.close()
+
+f = netCDF4.Dataset(dirout+'NDIC'+CO2+run+'_1y_1850_2099.nc', 'r')
+field = f.variables['ymean']
+feb = f.variables['yfeb']
+aug = f.variables['yaug']
+DICmean = np.mean(field[deb:fin],axis=0) * 1e6 / 1.027
+DDIC = np.mean(aug[deb:fin]-feb[deb:fin],axis=0) * 1e6 / 1.027
+f.close()
+
+f = netCDF4.Dataset(dirout+'NAlkalini'+CO2+run+'_1y_1850_2099.nc', 'r')
+field = f.variables['ymean']
+feb = f.variables['yfeb']
+aug = f.variables['yaug']
+TALKmean = np.mean(field[deb:fin],axis=0) * 1e6 / 1.027
+DTALK = np.mean(aug[deb:fin]-feb[deb:fin],axis=0) * 1e6 / 1.027
+f.close()
+
+f = netCDF4.Dataset(dirout+'NHcal'+CO2+run+'_1y_1850_2099.nc', 'r')
+field = f.variables['ymean']
+feb = f.variables['yfeb']
+aug = f.variables['yaug']
+Hmean = np.mean(field[deb:fin],axis=0) * 1e9 / 1.027
+DH = np.mean(aug[deb:fin]-feb[deb:fin],axis=0) * 1e9 / 1.027
+f.close()
+
+f = netCDF4.Dataset(dirout+'NOmegaA'+CO2+run+'_1y_1850_2099.nc', 'r')
+field = f.variables['ymean']
+feb = f.variables['yfeb']
+aug = f.variables['yaug']
+OAmean = np.mean(field[deb:fin],axis=0)
+DOA = np.mean(aug[deb:fin]-feb[deb:fin],axis=0)
+f.close()
+
+
+### Creates netCDF data set of the results
+
+# In[6]:
+
+# list of partial terms
+Term = ['At','Ct','S','T','At_At','At_Ct','At_S','At_T','Ct_Ct','Ct_S','Ct_T','S_S','S_T','T_T']
+# ncfile for pCO2
+if os.path.isfile(dirout+'Decom_pCO2'+CO2+run+'.nc'):
+    pCO2_ncfile = netCDF4.Dataset(dirout+'Decom_pCO2'+CO2+run+'.nc','a')
+else:
+    pCO2_ncfile = netCDF4.Dataset(dirout+'Decom_pCO2'+CO2+run+'.nc','w',format='NETCDF3_CLASSIC')
+    pCO2_ncfile.createDimension('lat', 160)     # latitude axis
+    pCO2_ncfile.createDimension('lon', 394)     # longitude axis
+# Define two variables with the same names as dimensions,
+# a conventional way to define "coordinate variables".
+    nav_lat = pCO2_ncfile.createVariable('nav_lat', 'f4', ('lat','lon'))
+    nav_lat.units = 'degrees_north'
+    nav_lat.standard_name = 'latitude'
+    nav_lon = pCO2_ncfile.createVariable('nav_lon', 'f4', ('lat','lon'))
+    nav_lon.units = 'degrees_east'
+    nav_lon.standard_name = 'longitude'
+# Write latitudes, longitudes.
+    nav_lat[:] = lat
+    nav_lon[:] = lon
+# Define a 2D variable to hold the data
+    for i in Term:
+        pCO2_ncfile.createVariable(i,'f4',('lat','lon'))
+# ncfile for H
+if os.path.isfile(dirout+'Decom_H'+CO2+run+'.nc'):
+    H_ncfile = netCDF4.Dataset(dirout+'Decom_H'+CO2+run+'.nc','a')
+else:
+    H_ncfile = netCDF4.Dataset(dirout+'Decom_H'+CO2+run+'.nc','w',format='NETCDF3_CLASSIC')
+    H_ncfile.createDimension('lat', 160)     # latitude axis
+    H_ncfile.createDimension('lon', 394)     # longitude axis
+# Define two variables with the same names as dimensions,
+# a conventional way to define "coordinate variables".
+    nav_lat = H_ncfile.createVariable('nav_lat', 'f4', ('lat','lon'))
+    nav_lat.units = 'degrees_north'
+    nav_lat.standard_name = 'latitude'
+    nav_lon = H_ncfile.createVariable('nav_lon', 'f4', ('lat','lon'))
+    nav_lon.units = 'degrees_east'
+    nav_lon.standard_name = 'longitude'
+# Write latitudes, longitudes.
+    nav_lat[:] = lat
+    nav_lon[:] = lon
+# Define a 2D variable to hold the data
+    for i in Term:
+        H_ncfile.createVariable(i,'f4',('lat','lon'))
+# ncfile for CO3
+if os.path.isfile(dirout+'Decom_CO3'+CO2+run+'.nc'):
+    CO3_ncfile = netCDF4.Dataset(dirout+'Decom_CO3'+CO2+run+'.nc','a')
+else:
+    CO3_ncfile = netCDF4.Dataset(dirout+'Decom_CO3'+CO2+run+'.nc','w',format='NETCDF3_CLASSIC')
+    CO3_ncfile.createDimension('lat', 160)     # latitude axis
+    CO3_ncfile.createDimension('lon', 394)     # longitude axis
+# Define two variables with the same names as dimensions,
+# a conventional way to define "coordinate variables".
+    nav_lat = CO3_ncfile.createVariable('nav_lat', 'f4', ('lat','lon'))
+    nav_lat.units = 'degrees_north'
+    nav_lat.standard_name = 'latitude'
+    nav_lon = CO3_ncfile.createVariable('nav_lon', 'f4', ('lat','lon'))
+    nav_lon.units = 'degrees_east'
+    nav_lon.standard_name = 'longitude'
+# Write latitudes, longitudes.
+    nav_lat[:] = lat
+    nav_lon[:] = lon
+# Define a 2D variable to hold the data
+    for i in Term:
+        CO3_ncfile.createVariable(i,'f4',('lat','lon'))
+# ncfile for OmegaA
+if os.path.isfile(dirout+'Decom_OmegaA'+CO2+run+'.nc'):
+    OmegaA_ncfile = netCDF4.Dataset(dirout+'Decom_OmegaA'+CO2+run+'.nc','a')
+else:
+    OmegaA_ncfile = netCDF4.Dataset(dirout+'Decom_OmegaA'+CO2+run+'.nc','w',format='NETCDF3_CLASSIC')
+    OmegaA_ncfile.createDimension('lat', 160)     # latitude axis
+    OmegaA_ncfile.createDimension('lon', 394)     # longitude axis
+# Define two variables with the same names as dimensions,
+# a conventional way to define "coordinate variables".
+    nav_lat = OmegaA_ncfile.createVariable('nav_lat', 'f4', ('lat','lon'))
+    nav_lat.units = 'degrees_north'
+    nav_lat.standard_name = 'latitude'
+    nav_lon = OmegaA_ncfile.createVariable('nav_lon', 'f4', ('lat','lon'))
+    nav_lon.units = 'degrees_east'
+    nav_lon.standard_name = 'longitude'
+# Write latitudes, longitudes.
+    nav_lat[:] = lat[:]
+    nav_lon[:] = lon[:]
+# Define a 2D variable to hold the data
+    for i in Term:
+        OmegaA_ncfile.createVariable(i,'f4',('lat','lon'))
+
+
+### Build wrapper functions to pass carb results to 'numDeriv' routines that compute derivatives (jacobian & hessian)
+
+# In[8]:
+
+get_ipython().run_cell_magic(u'R', u'', u'# Following routine name "f" can be passed directly to \'jacobian\' (array of 1st derivatives) in numDeriv package\n# Get 4 variables: pCO2, H, CO3, OmegaA\n  f <- function(z) {\n          At = z[1] * 1e-6\n          Ct = z[2] * 1e-6\n          salt = z[3]\n          temp = z[4]\n#          PO4 = z[5] * 1e-6\n#          Si = z[6]  * 1e-6\n          c <- carb(flag=15, var1=At, var2=Ct, S=salt, T=temp, P=0, Pt=0, Sit=0, k1k2="l", kf="dg", ks="d", pHscale="T")\n          H      <- 10^(-c$pH) * 1e+9 # Hydrogen ion concentration (nmol/kg)\n          CO3    <- c$CO3      * 1e+6 # Carbonate ion concentration (umol/kg)\n          pCO2   <- c$pCO2\n          OmegaA <- c$OmegaAragonite\n          output = cbind(pCO2, H, CO3, OmegaA)\n          return(output)\n          }\n# Unlike the numDeriv\'s \'jacobian\' function, its \'hessian\' function must compute a more complicated array for 1 variable at a time.\n# -> So , define arrays below to do that (will pass each array name as argument to \'hessian\')\n\n# Routines for \'hessian\':\n# Function to get only H variable from f\n  fH    <- function(z) {\n           g <- f(z)\n           g <- data.frame(g)\n           return(g$H)\n           }\n# Function to get only CO3 variable from f\n  fCO3  <- function(z) {\n           g <- f(z)\n           g <- data.frame(g)\n           return(g$CO3)\n           }\n# Function to get only pCO2 variable from f\n  fpCO2 <- function(z) {\n           g <- f(z)\n           g <- data.frame(g)\n           return(g$pCO2)\n           }\n# Function to get only OmegaAragonite variable from f\n  fOmegaA  <- function(z) {\n           g <- f(z)\n           g <- data.frame(g)\n           return(g$OmegaA)\n           }')
+
+
+### Calcul jacobian and hessian and part of each term of the decomposition
+
+# Compute Jacobian (1xn array of 1st derivatives), where `n` is the input variable (At, Ct, S, T) and `m` is the year (1850, 2100).
+# 
+# \begin{equation}
+# J =
+# \begin{bmatrix} 
+# \dfrac{\partial F_1}{\partial x_1} & \cdots & \dfrac{\partial F_1}{\partial x_n} \\
+# \vdots                             & \ddots & \vdots                             \\
+# \dfrac{\partial F_m}{\partial x_1} & \cdots & \dfrac{\partial F_m}{\partial x_n}  
+# \end{bmatrix}.
+# \end{equation}
+# 
+
+# Compute Hessian $H(f)_m$, an nxn array of 2nd derivatives, i.e., 1 array per output variable (m = 'pCO2', 'H', 'CO3', 'OmegaA'), where the row labels and the column labels are both the list of input variables (n = 'At', 'Ct', 'S', 'T').
+# 
+# \begin{equation}
+# H(f)_m = 
+# \begin{bmatrix}
+# \dfrac{\partial^2 f}{\partial x_1^2} & \dfrac{\partial^2 f}{\partial x_1\,\partial x_2} & \cdots & \dfrac{\partial^2 f}{\partial x_1\,\partial x_n} \\[2.2ex]
+# \dfrac{\partial^2 f}{\partial x_2\,\partial x_1} & \dfrac{\partial^2 f}{\partial x_2^2} & \cdots & \dfrac{\partial^2 f}{\partial x_2\,\partial x_n} \\[2.2ex]
+# \vdots & \vdots & \ddots & \vdots \\[2.2ex]
+# \dfrac{\partial^2 f}{\partial x_n\,\partial x_1} & \dfrac{\partial^2 f}{\partial x_n\,\partial x_2} & \cdots & \dfrac{\partial^2 f}{\partial x_n^2}
+# \end{bmatrix}.
+# \end{equation}
+# 
+
+# Compute simple product of $\Delta \times J$, element by element. Beforehand, need to expand same $\Delta$ vector (1 number per input variable) to be repeated, i.e., having 1 row (always the same) per output variable.
+# \begin{equation}
+# \Delta \times J =
+# \begin{bmatrix} 
+# \dfrac{\partial F_1}{\partial x_1} \Delta x_1 & \cdots & \dfrac{\partial F_1}{\partial x_n} \Delta x_n \\
+# \vdots                             & \ddots & \vdots                             \\
+# \dfrac{\partial F_m}{\partial x_1} \Delta x_1 & \cdots & \dfrac{\partial F_m}{\partial x_n} \Delta x_n 
+# \end{bmatrix}.
+# \end{equation}
+
+# Compute simple product of $\Delta \Delta \times H$, element by element.
+# \begin{equation}
+# H(f)_m \times \Delta^2 = 
+# \begin{bmatrix}
+# \dfrac{\partial^2 f}{\partial x_1^2} {(\Delta{x_1})}^2& \dfrac{\partial^2 f}{\partial x_1\,\partial x_2} \Delta{x_1}\Delta{x_2}
+#   & \cdots & \dfrac{\partial^2 f}{\partial x_1\,\partial x_n} \Delta{x_1}\Delta{x_n}\\[2.2ex]
+# \dfrac{\partial^2 f}{\partial x_2\,\partial x_1} \Delta{x_2}\Delta{x_1}& \dfrac{\partial^2 f}{\partial x_2^2} {(\Delta{x_2})}^2
+#   & \cdots & \dfrac{\partial^2 f}{\partial x_2\,\partial x_n} \Delta{x_2}\Delta{x_n}\\[2.2ex]
+# \vdots & \vdots & \ddots & \vdots \\[2.2ex]
+# \dfrac{\partial^2 f}{\partial x_n\,\partial x_1} \Delta{x_n}\Delta{x_1}& \dfrac{\partial^2 f}{\partial x_n\,\partial x_2}      \Delta{x_n}\Delta{x_2} & \cdots & \dfrac{\partial^2 f}{\partial x_n^2} {(\Delta{x_n})}^2
+# \end{bmatrix}.
+# \end{equation}
+
+# In[ ]:
+
+# Provide data point by point and run by run
+for ii in range(160):
+    for jj in range(394):
+        print((ii,jj))
+
+        #ii = 100
+        #jj = 150
+        if mask[ii,jj] == 1:
+# 1) Get the mean state and Amplitude annual cycle
+# Surface Mean for Med Sea Basin (1x4 array)
+          At = TALKmean[ii,jj]
+          #At = 2685
+          Ct = DICmean[ii,jj]
+          #Ct = 2300
+          Salt = Smean[ii,jj]
+          #Salt = 38.1
+          Temp = Tmean[ii,jj]
+          #Temp = 18.5
+          #PO4 = PO4mean[ii,jj]
+          #Si = Simean[ii,jj]
+          z = np.array([At, Ct, Salt, Temp])
+# Get the surface Amplitude of Annual Cycle (August - Feb, because that is when amplitude for H+ is largest)
+#    upper case "D" indicates Delta (Aug - Feb)
+          DAt = DTALK[ii,jj]
+          #DAt = 15
+          DCt = DDIC[ii,jj]
+          #DCt = -5
+          DSalt = DS[ii,jj] 
+          #DSalt = 0.1
+          DTemp = DT[ii,jj]
+          #DTemp = 11
+          Del = np.array([DAt, DCt, DSalt, DTemp])
+          Del = np.kron(np.ones((4,1)),Del)
+# Additionnal convenient transformation of Del for combined products.
+# Zero out elements of the array that are duplicates
+# (one out of each pair of the elements that are symetric across the diagonal),
+# for proper contribution to the total sum of the $\Delta\Delta \times H$ array, divided by two.
+          Del2=Del*Del.conj().transpose()*np.tril(1-0.5*np.identity(4))
+  
+# 2) Compute the 1st and 2nd derivatives
+# Compute Jacobian (array of 1st partial derivatives)
+# Options below: use func=f to get all 4 variables
+# func=f       (m=4: pCO2, H, CO3, OmegaA)
+# func=fH      (m=1: H only)
+# func=fCO3    (m=1: CO3 only)
+# func=fpCO2   (m=1: pCO2 only)
+# func=fOmegaA (m=1: OmegaA only)
+          get_ipython().magic(u"R -i z -o jac jac <- jacobian(func=f, x=z, method='simple')")
+# Compute Hessian (array of 2nd partial derivatives)
+          get_ipython().magic(u'R --o hespCO2   hespCO2   <- hessian(func=fpCO2, x=z)')
+          get_ipython().magic(u'R -o hesH      hesH      <- hessian(func=fH, x=z)')
+          get_ipython().magic(u'R -o hesCO3    hesCO3    <- hessian(func=fCO3, x=z)')
+          get_ipython().magic(u'R -o hesOmegaA hesOmegaA <- hessian(func=fOmegaA, x=z)')
+
+# 3) Compute combined products: derivatives times $\Delta$'s
+# Products with 1st derivatives; multiply matrices 1st order terms
+          o1st = Del * jac
+# Products with 2nd derivatives;  multiply matrices 2nd order terms
+          o2ndpCO2 = Del2 * hespCO2;
+          o2ndH = Del2 * hesH;
+          o2ndCO3 = Del2 * hesCO3;
+          o2ndOmegaA = Del2 * hesOmegaA;
+# Massage products of 2nd-order derivatives.
+# Rearrange $\Delta \Delta \times H$ results (2nd order terms) into data frames
+# with same structure as for the $\Delta \times J$ results (1st order terms).
+          o2nd = np.empty((4,10))
+          o2nd[0,] = o2ndpCO2[o2ndpCO2!=0].conj().transpose()
+          o2nd[1,] = o2ndH[o2ndH!=0].conj().transpose()
+          o2nd[2,] = o2ndCO3[o2ndCO3!=0].conj().transpose()
+          o2nd[3,] = o2ndOmegaA[o2ndOmegaA!=0].conj().transpose() 
+  
+# 4) Writing netCDF data with all separate terms
+          pCO2_ncfile.variables['At'][ii,jj] = o1st[0,0]
+          pCO2_ncfile.variables['Ct'][ii,jj] = o1st[0,1]
+          pCO2_ncfile.variables['S'][ii,jj]  = o1st[0,2]
+          pCO2_ncfile.variables['T'][ii,jj]  = o1st[0,3]
+          pCO2_ncfile.variables['At_At'][ii,jj] = o2nd[0,0]
+          pCO2_ncfile.variables['At_Ct'][ii,jj] = o2nd[0,1]
+          pCO2_ncfile.variables['Ct_Ct'][ii,jj] = o2nd[0,2]
+          pCO2_ncfile.variables['At_S'][ii,jj]  = o2nd[0,3]
+          pCO2_ncfile.variables['Ct_S'][ii,jj]  = o2nd[0,4]
+          pCO2_ncfile.variables['S_S'][ii,jj]   = o2nd[0,5]
+          pCO2_ncfile.variables['At_T'][ii,jj]  = o2nd[0,6]
+          pCO2_ncfile.variables['Ct_T'][ii,jj]  = o2nd[0,7]
+          pCO2_ncfile.variables['S_T'][ii,jj]   = o2nd[0,8]
+          pCO2_ncfile.variables['T_T'][ii,jj]   = o2nd[0,9]
+          H_ncfile.variables['At'][ii,jj] = o1st[1,0]
+          H_ncfile.variables['Ct'][ii,jj] = o1st[1,1]
+          H_ncfile.variables['S'][ii,jj]  = o1st[1,2]
+          H_ncfile.variables['T'][ii,jj]  = o1st[1,3]
+          H_ncfile.variables['At_At'][ii,jj] = o2nd[1,0]
+          H_ncfile.variables['At_Ct'][ii,jj] = o2nd[1,1]
+          H_ncfile.variables['Ct_Ct'][ii,jj] = o2nd[1,2]
+          H_ncfile.variables['At_S'][ii,jj]  = o2nd[1,3]
+          H_ncfile.variables['Ct_S'][ii,jj]  = o2nd[1,4]
+          H_ncfile.variables['S_S'][ii,jj]   = o2nd[1,5]
+          H_ncfile.variables['At_T'][ii,jj]  = o2nd[1,6]
+          H_ncfile.variables['Ct_T'][ii,jj]  = o2nd[1,7]
+          H_ncfile.variables['S_T'][ii,jj]   = o2nd[1,8]
+          H_ncfile.variables['T_T'][ii,jj]   = o2nd[1,9]
+          CO3_ncfile.variables['At'][ii,jj] = o1st[2,0]
+          CO3_ncfile.variables['Ct'][ii,jj] = o1st[2,1]
+          CO3_ncfile.variables['S'][ii,jj]  = o1st[2,2]
+          CO3_ncfile.variables['T'][ii,jj]  = o1st[2,3]
+          CO3_ncfile.variables['At_At'][ii,jj] = o2nd[2,0]
+          CO3_ncfile.variables['At_Ct'][ii,jj] = o2nd[2,1]
+          CO3_ncfile.variables['Ct_Ct'][ii,jj] = o2nd[2,2]
+          CO3_ncfile.variables['At_S'][ii,jj]  = o2nd[2,3]
+          CO3_ncfile.variables['Ct_S'][ii,jj]  = o2nd[2,4]
+          CO3_ncfile.variables['S_S'][ii,jj]   = o2nd[2,5]
+          CO3_ncfile.variables['At_T'][ii,jj]  = o2nd[2,6]
+          CO3_ncfile.variables['Ct_T'][ii,jj]  = o2nd[2,7]
+          CO3_ncfile.variables['S_T'][ii,jj]   = o2nd[2,8]
+          CO3_ncfile.variables['T_T'][ii,jj]   = o2nd[2,9]
+          OmegaA_ncfile.variables['At'][ii,jj] = o1st[3,0]
+          OmegaA_ncfile.variables['Ct'][ii,jj] = o1st[3,1]
+          OmegaA_ncfile.variables['S'][ii,jj]  = o1st[3,2]
+          OmegaA_ncfile.variables['T'][ii,jj]  = o1st[3,3]
+          OmegaA_ncfile.variables['At_At'][ii,jj] = o2nd[3,0]
+          OmegaA_ncfile.variables['At_Ct'][ii,jj] = o2nd[3,1]
+          OmegaA_ncfile.variables['Ct_Ct'][ii,jj] = o2nd[3,2]
+          OmegaA_ncfile.variables['At_S'][ii,jj]  = o2nd[3,3]
+          OmegaA_ncfile.variables['Ct_S'][ii,jj]  = o2nd[3,4]
+          OmegaA_ncfile.variables['S_S'][ii,jj]   = o2nd[3,5]
+          OmegaA_ncfile.variables['At_T'][ii,jj]  = o2nd[3,6]
+          OmegaA_ncfile.variables['Ct_T'][ii,jj]  = o2nd[3,7]
+          OmegaA_ncfile.variables['S_T'][ii,jj]   = o2nd[3,8]
+          OmegaA_ncfile.variables['T_T'][ii,jj]   = o2nd[3,9]
+
+
+# In[10]:
+pCO2_ncfile.close()
+H_ncfile.close()
+CO3_ncfile.close()
+OmegaA_ncfile.close()
+
+
+### Computed and show combined products
+
+# Combine 1st & 2nd order data frames and compute sums of absolute contributions for 1st order terms, 2nd order terms, and all terms. 
+
+
+### Conclusions
+
+# For the calculated variables, the 2nd order terms are essentially 2nd order in importance, when taken together. For $p$CO$_2$, they contribute only 12 to 14% of the total change, all together. That finding is as hoped by those who chose to do the 1st order only simplification (truncating 2nd order terms and beyond). 
+# 
+# Yet there is a whole lot of compensation going on. So it is misleading to simply neglect all individual 2nd order terms.  Particularly in the case of temperature, some individual 2nd order terms are larger than some of individual 1st order terms. For instance for $p$CO$_2$, there is a large change due to the 2nd-order diagonal term for temperature, 
+# $$
+# \dfrac{\partial^2 f}{\partial x_n^2} {(\Delta{x_n})}^2
+# \hbox{,}
+# $$
+# which is equivalent to 20 to 25% of the total amplitude. That is more than any other first-order term except that for temperature itself. So some 2nd order terms should not be neglected any more than should be some of the 1st order terms.
+# 
+# A sensitivity test where the $\Delta$'s are divided by 10 and the analysis is rerun leads to dramatically different results.  The 2nd order terms become negligible, with 99% of the total variability explained by only the 1st order terms.  Thus there is substantial curvature of the 1st derivatives (particularly the $\partial  \over \partial T$ terms) between the limits of the modeled amplitude of $T$.  When the $\Delta T$ is reduced by a factor of 10 (i.e., as $h \rightarrow 0$), we come much closer to a linear system where only the first derivative is needed to describe the system. Hence the 2nd order terms are critical to include when the $\Delta$ is relatively large. As a corollary, when 2nd order terms are large, they demonstrate quantitatively that the provided $\Delta$ is too big to be assumed infinitessimal. In short, a large $\Delta$ implies that the 2nd order terms must be included. 
+# 
+# In some cases we might instinctively reason that a $\Delta$ is too large (e.g., $\Delta T = \hbox{12}^\circ$C) or sufficiently small ($\Delta S = \hbox{0.1}$) to consider only first-order terms. For less obvious cases, before including second-order terms, one could determine quantiatitvely if a simple line is sufficient to describe a computed variable for a given $\Delta$. For example, by plotting its first derivative with respect to temperature vs. temperature, one could evaluate the residuals at the limits and if they surpass 5% of the mean over the $\Delta$ limits, one could decide to include related 2nd order terms. Alternatively, one could just include the second-order terms from the beginning, including a small set of typical data and their $\Delta$'s. Indeed that can be done easily by making slight modifications to the input data at the beginning of this iPython Notebook. 
+
+### Future work
+
+# 1. Need to output tables of final results of 1st derivatives, 2nd derivatives, Delta's (via pandas (python) and in LaTeX under R).
+# 
+# 2. Need to make `contour` plots of key partials, 2nd derivatives, similar to done for Orr (2011), i.e. in $A_T$-$C_T$ space (or perhaps $A_T$-$p$CO$_2$ space). This will require revamping this script to take on the more extensive calculations that need to be done over this 2-D parameter space.
+# 
+# 3. Need to plot results for 1850, 2000, 2100 as points on these contour plots (for Med Sea mean and perhaps west & east basins, or specific locations). The problem is that contour lines in a given plot are for 1 pair of T, S.
+# 
+# 4. Need to repeat analysis but also perhaps for year 2000 and for west vs. east basins of Med Sea.
+# 
+# 5. Need to verify 1st derivatives with analytical formula's via `buffesm` in `seacarb`.
+# 
+# 6. Need to add `OmegaC` array to see if it is consistent with `OmegaA` results.
+# 
+# 7. Need to do steps (5) and (6) above in an attempt to understand why CO3 and OmegaA results seem so different.
+# 
+# 8. Need to somehow assess impact of very large $\Delta$ for T. Perhaps this analysis does not work. Try this by dividing all Delta's by 10. DONE (see Conclusions)
+# 
+# 9. Need to read in MED8 surface maps of $\Delta$'s and "mean values" for $A_T$, $C_T$, $T$, and $S$ (August - Feb mean), to compute maps of individual terms. This will require some recoding to compute partials etc (e.g., need to replace year index for index for i- and j-grid cells.   
+
+### References
+
+# Previdi, M., K. Fennel, J. Wilkin, and D. Haidvogel (2009), Interannual variability in atmospheric CO2 uptake on the
+# northeast U.S. continental shelf, J. Geophys. Res., 114, G04003, doi:10.1029/2008JG000881.
+#     
+# 
